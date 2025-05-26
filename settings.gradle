@@ -1,0 +1,6 @@
+// settings.gradle
+rootProject.name = 'oauth-project'
+
+// Register subprojects
+include 'authorization-server', 'resource-server', 'client-app'
+

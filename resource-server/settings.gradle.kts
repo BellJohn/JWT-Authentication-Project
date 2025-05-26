@@ -1,0 +1,4 @@
+
+
+rootProject.name="resource-server"
+

@@ -1,0 +1,26 @@
+# OS-specific system files
+Thumbs.db
+.DS_Store
+
+# Gradle build files (all nested projects)
+**/.gradle/
+**/build/
+**/target/
+**/out/
+!gradle-wrapper.jar
+gradle/wrapper/
+
+# Micronaut-specific files
+**/.micronaut/
+
+# IntelliJ IDEA project files
+**/.idea/
+*.iml
+*.ipr
+*.iws
+
+# Eclipse IDE project files
+.project
+.settings
+.classpath
+.factorypath

@@ -1,0 +1,28 @@
+// build.gradle (Top Level)
+plugins {
+    id 'base' // Ensures Gradle handles multi-project builds properly
+}
+
+allprojects {
+    group = 'com.example'
+    version = '1.0.0'
+
+    repositories {
+        mavenCentral()
+    }
+}
+
+task buildAll {
+    dependsOn ':authorization-server:build'
+    dependsOn ':resource-server:build'
+    dependsOn ':client-app:build'
+}
+
+task cleanAll {
+    dependsOn ':authorization-server:clean'
+    dependsOn ':resource-server:clean'
+    dependsOn ':client-app:clean'
+}
+
+defaultTasks 'buildAll'
+
