@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   authorization-server:
-    build: ./authorization-server
+    build: ./auth-server
     ports:
       - "8081:8080"
 

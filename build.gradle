@@ -13,13 +13,13 @@ allprojects {
 }
 
 task buildAll {
-    dependsOn ':authorization-server:build'
+    dependsOn ':auth-server:build'
     dependsOn ':resource-server:build'
     dependsOn ':client-app:build'
 }
 
 task cleanAll {
-    dependsOn ':authorization-server:clean'
+    dependsOn ':auth-server:clean'
     dependsOn ':resource-server:clean'
     dependsOn ':client-app:clean'
 }
