@@ -5,6 +5,7 @@ import com.bellj.authserver.model.LoginRequest;
 import com.bellj.authserver.model.RegisterRequest;
 import com.bellj.authserver.service.TokenService;
 import com.bellj.authserver.service.UserService;
+import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.jwk.JWK;
 import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.RSAKey;
@@ -46,7 +47,11 @@ public class AuthController {
 
         return userId.map(id -> {
             LOGGER.info("Access Granted");
-            return ResponseEntity.ok(tokenService.generateToken(id));
+            try {
+                return ResponseEntity.ok(tokenService.generateUserToken(id));
+            } catch (JOSEException | ParseException e) {
+                throw new RuntimeException(e);
+            }
         }).orElseGet(() -> {
             LOGGER.info("Access Denied");
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ProblemDetail.forStatus(HttpStatus.UNAUTHORIZED).getDetail());
@@ -58,10 +63,7 @@ public class AuthController {
     public ResponseEntity<String> registerUser(@RequestBody RegisterRequest registerRequest){
         LOGGER.info("Register invoked with {}", registerRequest);
 
-        User user = new User();
-        user.setUsername(registerRequest.username());
-        user.setPassword(BCrypt.hashpw(registerRequest.password(), BCrypt.gensalt(12)));
-        if(userService.saveUser(user)) {
+        if(userService.createUser(registerRequest)) {
             return ResponseEntity.status(HttpStatus.CREATED).body("User Registered OK");
         }
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("User Registration Failed");
@@ -69,13 +71,16 @@ public class AuthController {
 
     @GetMapping("/jwks")
     @Operation(summary = "Return the JWKS", description = "Fetches the JWKS containing the public key for verifying the signature of the JWT")
-    public ResponseEntity<JWKSet> getJWKS() throws ParseException {
+    public ResponseEntity<String> getJWKS() {
         LOGGER.info("JWKS invoked");
 
         RSAKey rsaKey = new RSAKey.Builder((RSAPublicKey) tokenService.getPublicKey())
                 .keyID("my-key-id")
                 .build();
 
-        return ResponseEntity.status(HttpStatus.OK).body(new JWKSet(JWK.parse(rsaKey.toJSONObject())));
+        // Convert JWKSet to properly formatted JSON string
+        String jwksJson = rsaKey.toPublicJWK().toJSONString();
+
+        return ResponseEntity.ok("{\"keys\": [" + jwksJson + "]}");
     }
 }

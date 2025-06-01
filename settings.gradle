@@ -2,5 +2,5 @@
 rootProject.name = 'jwt-authentication-project'
 
 // Register subprojects
-include 'auth-server', 'resource-server', 'client-app'
+include 'auth-server', 'resource-server'
 

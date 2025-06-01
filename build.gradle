@@ -15,13 +15,11 @@ allprojects {
 task buildAll {
     dependsOn ':auth-server:build'
     dependsOn ':resource-server:build'
-    dependsOn ':client-app:build'
 }
 
 task cleanAll {
     dependsOn ':auth-server:clean'
     dependsOn ':resource-server:clean'
-    dependsOn ':client-app:clean'
 }
 
 defaultTasks 'buildAll'

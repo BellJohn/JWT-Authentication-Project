@@ -1,17 +1,26 @@
 package com.bellj.authserver.service;
 
-import com.auth0.jwt.JWT;
-import com.auth0.jwt.algorithms.Algorithm;
+import com.nimbusds.jose.JOSEException;
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.JWSHeader;
+import com.nimbusds.jose.crypto.RSASSASigner;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.security.*;
-import java.util.Base64;
+import java.text.ParseException;
 import java.util.Date;
 
 @Service
 public class TokenService {
     private final PrivateKey privateKey;
     private final PublicKey publicKey;
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(TokenService.class);
+    private static final long FIFTEEN_MINUTES_IN_MILLIS = 15 * 60 * 1000;
 
     public TokenService() throws NoSuchAlgorithmException {
         KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
@@ -21,13 +30,34 @@ public class TokenService {
         publicKey = keyPair.getPublic();
     }
 
-    public String generateToken(Long userId) {
-        Algorithm algorithm = Algorithm.HMAC256(Base64.getEncoder().encodeToString(privateKey.getEncoded()));
-        return JWT.create()
-                .withIssuer("auth-server")
-                .withSubject(String.valueOf(userId))
-                .withExpiresAt(new Date(System.currentTimeMillis() + 3600000)) // 1-hour expiry
-                .sign(algorithm);
+    public String generateUserToken(Long userId) throws JOSEException, ParseException {
+        LOGGER.info("Generating new user token");
+        JWTClaimsSet claimsSet = new JWTClaimsSet.Builder()
+                .subject(String.valueOf(userId))
+                .issuer("auth-server")
+                .expirationTime(new Date(System.currentTimeMillis() + FIFTEEN_MINUTES_IN_MILLIS))
+                .claim("ROLE", "USER")
+                .build();
+
+        SignedJWT signedJWT = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.RS256).keyID("my-key-id").build(), claimsSet);
+
+        signedJWT.sign(new RSASSASigner(privateKey));
+        return signedJWT.serialize();
+    }
+
+    public String generatePrivilegedToken() throws JOSEException, ParseException {
+            LOGGER.info("Generating new privileged token");
+            JWTClaimsSet claimsSet = new JWTClaimsSet.Builder()
+                    .subject(String.valueOf(-1))
+                    .issuer("auth-server")
+                    .expirationTime(new Date(System.currentTimeMillis() + FIFTEEN_MINUTES_IN_MILLIS))
+                    .claim("ROLE", "PRIVILEGED")
+                    .build();
+
+            SignedJWT signedJWT = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.RS256).keyID("my-key-id").build(), claimsSet);
+
+            signedJWT.sign(new RSASSASigner(privateKey));
+        return signedJWT.serialize();
     }
 
     public PublicKey getPublicKey() {
