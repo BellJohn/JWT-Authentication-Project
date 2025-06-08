@@ -3,11 +3,11 @@ package com.bellj.resourceserver;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
+/** Spring entrypoint */
 @SpringBootApplication
-public class DemoApplication {
+public class ResourceServerApplication {
 
-	public static void main(String[] args) {
-		SpringApplication.run(DemoApplication.class, args);
-	}
-
+  public static void main(String[] args) {
+    SpringApplication.run(ResourceServerApplication.class, args);
+  }
 }

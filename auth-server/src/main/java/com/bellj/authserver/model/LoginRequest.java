@@ -1,5 +1,4 @@
 package com.bellj.authserver.model;
 
-public record LoginRequest(String username, String password) {
-}
-
+/** Http Request Object for Login Requests */
+public record LoginRequest(String username, String password) {}

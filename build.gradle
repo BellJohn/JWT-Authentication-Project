@@ -1,14 +1,24 @@
-// build.gradle (Top Level)
 plugins {
-    id 'base' // Ensures Gradle handles multi-project builds properly
+    id 'base'
+    id 'com.diffplug.spotless' version '7.0.4' apply false
 }
 
+
 allprojects {
-    group = 'com.example'
+    group = 'com.bellj'
     version = '1.0.0'
 
     repositories {
         mavenCentral()
+    }
+
+    apply plugin: 'com.diffplug.spotless'
+
+    spotless {
+        java {
+            target("src/**/*.java") // Include all Java files
+            googleJavaFormat()
+        }
     }
 }
 

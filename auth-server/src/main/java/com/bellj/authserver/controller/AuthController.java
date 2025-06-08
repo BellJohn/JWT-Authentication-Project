@@ -1,86 +1,105 @@
 package com.bellj.authserver.controller;
 
-import com.bellj.authserver.entity.User;
 import com.bellj.authserver.model.LoginRequest;
 import com.bellj.authserver.model.RegisterRequest;
 import com.bellj.authserver.service.TokenService;
 import com.bellj.authserver.service.UserService;
 import com.nimbusds.jose.JOSEException;
-import com.nimbusds.jose.jwk.JWK;
-import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.RSAKey;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.mindrot.jbcrypt.BCrypt;
+import java.security.interfaces.RSAPublicKey;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.security.interfaces.RSAPublicKey;
-import java.text.ParseException;
-import java.util.Optional;
-
-
+/** Entrypoint for all user authentication. Handles user registration and login. */
 @RestController
 @RequestMapping("/auth")
 @Tag(name = "Authentication", description = "Handles login/authentication requests")
 public class AuthController {
-    private static final Logger LOGGER = LoggerFactory.getLogger(AuthController.class);
-    private final TokenService tokenService;
-    private final UserService userService;
+  private static final Logger LOGGER = LoggerFactory.getLogger(AuthController.class);
+  private final TokenService tokenService;
+  private final UserService userService;
 
-    public AuthController(TokenService tokenService, UserService userService){
-        this.tokenService = tokenService;
-        this.userService = userService;
+  public AuthController(TokenService tokenService, UserService userService) {
+    this.tokenService = tokenService;
+    this.userService = userService;
+  }
+
+  /**
+   * Handles the login attempts for users. Successful logins result in a user role access JWT being
+   * granted.
+   *
+   * @param loginRequest Request containing the user's credentials
+   * @return JWT granting access to this user's resources
+   */
+  @PostMapping("/login")
+  @Operation(summary = "User Login", description = "Authenticates user and returns a JWT token")
+  public ResponseEntity<String> login(@RequestBody LoginRequest loginRequest) {
+    LOGGER.info("Login request received for user: {}", loginRequest.username());
+
+    return userService
+        .getValidUserId(loginRequest.username(), loginRequest.password())
+        .map(this::generateJwtResponse)
+        .orElseGet(
+            () -> {
+              LOGGER.warn("Login failed for user: {}", loginRequest.username());
+              return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid credentials");
+            });
+  }
+
+  private ResponseEntity<String> generateJwtResponse(Long userId) {
+    try {
+      LOGGER.info("Token generation successful for user ID: {}", userId);
+      return ResponseEntity.ok(tokenService.generateUserToken(userId));
+    } catch (JOSEException e) {
+      LOGGER.error("Token generation failed: {}", e.getMessage(), e);
+      return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Token generation error");
     }
+  }
 
-    @PostMapping("/login")
-    @Operation(summary = "User Login", description = "Authenticates user and returns a JWT token")
-    public ResponseEntity<String> login(@RequestBody LoginRequest loginRequest) {
-        LOGGER.info("Login invoked with {}", loginRequest);
+  /**
+   * Handles the registration of new users. This results in a new user entity for this service to
+   * manage and a profile under the resource server.
+   *
+   * @param registerRequest Request containing the users credentials plus profile data.
+   * @return Simple outcome message
+   */
+  @PostMapping("/register")
+  @Operation(summary = "User Registration", description = "Registers a new user")
+  public ResponseEntity<String> registerUser(@RequestBody RegisterRequest registerRequest) {
+    LOGGER.info("Register invoked");
 
-        Optional<Long> userId = userService.getValidUserId(loginRequest.username(), loginRequest.password());
-        LOGGER.info("User ID retrieved: {}", userId);
-
-        return userId.map(id -> {
-            LOGGER.info("Access Granted");
-            try {
-                return ResponseEntity.ok(tokenService.generateUserToken(id));
-            } catch (JOSEException | ParseException e) {
-                throw new RuntimeException(e);
-            }
-        }).orElseGet(() -> {
-            LOGGER.info("Access Denied");
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ProblemDetail.forStatus(HttpStatus.UNAUTHORIZED).getDetail());
-        });
+    if (userService.createUser(registerRequest)) {
+      return ResponseEntity.status(HttpStatus.CREATED).body("User Registered OK");
     }
+    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("User Registration Failed");
+  }
 
-    @PostMapping("/register")
-    @Operation(summary = "User Registration", description = "Registers a new user")
-    public ResponseEntity<String> registerUser(@RequestBody RegisterRequest registerRequest){
-        LOGGER.info("Register invoked with {}", registerRequest);
+  /**
+   * Handles JWKS requests. Note. JWKS will be different each time the system is booted.
+   *
+   * @return The JWKS
+   */
+  @GetMapping("/jwks")
+  @Operation(
+      summary = "Return the JWKS",
+      description =
+          "Fetches the JWKS containing the public key for verifying the signature of the JWT")
+  public ResponseEntity<String> getJWKS() {
+    LOGGER.info("JWKS invoked");
 
-        if(userService.createUser(registerRequest)) {
-            return ResponseEntity.status(HttpStatus.CREATED).body("User Registered OK");
-        }
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("User Registration Failed");
-    }
+    RSAKey rsaKey =
+        new RSAKey.Builder((RSAPublicKey) tokenService.getPublicKey())
+            .keyID("auth-server-key-id")
+            .build();
 
-    @GetMapping("/jwks")
-    @Operation(summary = "Return the JWKS", description = "Fetches the JWKS containing the public key for verifying the signature of the JWT")
-    public ResponseEntity<String> getJWKS() {
-        LOGGER.info("JWKS invoked");
+    // Convert JWKSet to properly formatted JSON string
+    String jwksJson = rsaKey.toPublicJWK().toJSONString();
 
-        RSAKey rsaKey = new RSAKey.Builder((RSAPublicKey) tokenService.getPublicKey())
-                .keyID("my-key-id")
-                .build();
-
-        // Convert JWKSet to properly formatted JSON string
-        String jwksJson = rsaKey.toPublicJWK().toJSONString();
-
-        return ResponseEntity.ok("{\"keys\": [" + jwksJson + "]}");
-    }
+    return ResponseEntity.ok("{\"keys\": [" + jwksJson + "]}");
+  }
 }

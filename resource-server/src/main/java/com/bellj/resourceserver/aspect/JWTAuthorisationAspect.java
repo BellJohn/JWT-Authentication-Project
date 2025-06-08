@@ -9,6 +9,9 @@ import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
 import jakarta.servlet.http.HttpServletRequest;
+import java.text.ParseException;
+import java.util.Date;
+import java.util.Objects;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
@@ -18,103 +21,121 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
-import java.text.ParseException;
-import java.util.Date;
-import java.util.Objects;
-
+/** Aspect for verifying the JWT provided in the HTTP Request. */
 @Aspect
 @Component
 public class JWTAuthorisationAspect {
 
-    public static Logger LOGGER = LoggerFactory.getLogger(JWTAuthorisationAspect.class);
-    public JWKSRetriever jwksRetriever;
+  private static final Logger LOGGER = LoggerFactory.getLogger(JWTAuthorisationAspect.class);
+  private final JWKSRetriever jwksRetriever;
 
-    public JWTAuthorisationAspect(JWKSRetriever jwksRetriever) {
-        this.jwksRetriever = jwksRetriever;
+  public JWTAuthorisationAspect(JWKSRetriever jwksRetriever) {
+    this.jwksRetriever = jwksRetriever;
+  }
+
+  /**
+   * Any method annotated with the @JWTAuthorisation annotation will be woven with this advice
+   * method. This ensures that the correct access role is present in the JWT to access a given
+   * method. </br> E.g. a method annotated with @JWTAuthorisation("USER") must have a user access
+   * token.
+   *
+   * @param joinPoint The method which has the annotation on it.
+   * @param jwtAuthorisation The authorisation role that should be present.
+   * @return The logic behind the target as access is granted.
+   * @throws Throwable When access to the target method is not granted.
+   */
+  @Around("@annotation(jwtAuthorisation)")
+  public Object validateJwt(ProceedingJoinPoint joinPoint, JWTAuthorisation jwtAuthorisation)
+      throws Throwable {
+    LOGGER.info("JWT Authorisation annotation invoked");
+
+    HttpServletRequest request = getCurrentRequest();
+    String token = request.getHeader("Authorization");
+    String requestUserId = getRequestUserId(request);
+
+    if (!isValidToken(token, jwtAuthorisation.value(), requestUserId)) {
+      throw new UnauthorizedException("Invalid JWT token");
     }
 
-    @Around(value = "@annotation(jwtAuthorisation)")
-    public Object validateJwt(ProceedingJoinPoint joinPoint, JWTAuthorisation jwtAuthorisation) throws Throwable {
-        LOGGER.info("JWT Authorisation annotation invoked");
-        HttpServletRequest request = ((ServletRequestAttributes) Objects.requireNonNull(RequestContextHolder.getRequestAttributes())).getRequest();
-        String token = request.getHeader("Authorization");
+    return joinPoint.proceed();
+  }
 
-        // Extract `userId` from the request URI
-        String requestUserId = "";
-        if (request.getMethod().equalsIgnoreCase("GET")) {
-            String requestURI = request.getRequestURI();
-            String[] pathSegments = requestURI.split("/");
-            requestUserId = pathSegments[pathSegments.length - 1]; // Assuming userId is the last segment
-        }
-        if (!isValidToken(token, jwtAuthorisation.value(), requestUserId)) {
-            throw new UnauthorizedException("Invalid JWT token");
-        }
+  private HttpServletRequest getCurrentRequest() {
+    return ((ServletRequestAttributes)
+            Objects.requireNonNull(RequestContextHolder.getRequestAttributes()))
+        .getRequest();
+  }
 
-        return joinPoint.proceed();
+  private String getRequestUserId(HttpServletRequest request) {
+    if ("GET".equalsIgnoreCase(request.getMethod())) {
+      String[] pathSegments = request.getRequestURI().split("/");
+      return pathSegments.length > 0 ? pathSegments[pathSegments.length - 1] : "";
+    }
+    return "";
+  }
+
+  private boolean isValidToken(String header, String expectedRole, String userId) {
+    if (header == null || !header.startsWith("Bearer ")) {
+      LOGGER.error("Invalid Authorization header.");
+      return false;
     }
 
-    private boolean isValidToken(String header, String expectedRole, String userId) {
-        if (header == null || !header.startsWith("Bearer ")) {
-            LOGGER.error("Invalid Authorization header.");
-            return false;
-        }
+    try {
+      SignedJWT jwt = SignedJWT.parse(header.substring("Bearer ".length()));
+      JWTClaimsSet claims = jwt.getJWTClaimsSet();
+      String claimedRole = claims.getStringClaim("ROLE");
+      String claimedUserId = claims.getSubject();
 
-        String authToken = header.substring("Bearer ".length());
+      return !invalidSignature(jwt)
+          && !hasExpired(jwt)
+          && isValidRole(claimedRole, expectedRole)
+          && isValidUser(expectedRole, userId, claimedUserId);
+    } catch (ParseException e) {
+      LOGGER.warn("Malformed JWT token.", e);
+      return false;
+    }
+  }
 
-        try {
-            SignedJWT jwt = SignedJWT.parse(authToken);
-            JWTClaimsSet claims = jwt.getJWTClaimsSet();
-            String claimedRole = claims.getStringClaim("ROLE");
-            String claimedUserID = claims.getSubject();
-            if (invalidSignature(jwt) || hasExpired(jwt) || hasInvalidRoleType(claimedRole, expectedRole)) {
-                return false;
-            }
+  private boolean isValidRole(String claimedRole, String expectedRole) {
+    if (!claimedRole.equals(expectedRole)) {
+      LOGGER.warn("Invalid role types provided: [{}], not [{}]", claimedRole, expectedRole);
+      return false;
+    }
+    return true;
+  }
 
-            if ("USER".equals(expectedRole)) {
-                if (userId == null || userId.isBlank()) {
-                    LOGGER.info("Missing userId");
-                    return false;
-                }
-                if (!userId.equals(claimedUserID)) {
-                    LOGGER.warn("User ID mismatch: attempted access [{}] with credentials of [{}]", userId, claimedUserID);
-                    return false;
-                }
-            }
-            return true;
-        } catch (ParseException e) {
-            LOGGER.warn("Malformed JWT token.", e);
-            return false;
-        }
+  private boolean isValidUser(String expectedRole, String userId, String claimedUserId) {
+    if ("USER".equals(expectedRole)
+        && (userId == null || userId.isBlank() || !userId.equals(claimedUserId))) {
+      LOGGER.warn(
+          "User ID mismatch or missing: attempted access [{}] with credentials [{}]",
+          userId,
+          claimedUserId);
+      return false;
+    }
+    return true;
+  }
+
+  private boolean invalidSignature(SignedJWT jwt) {
+    try {
+      RSAKey publicKey = jwksRetriever.getJWKSet().getKeys().get(0).toRSAKey();
+      JWSVerifier verifier = new RSASSAVerifier(publicKey.toRSAPublicKey());
+
+      if (!verifier.verify(jwt.getHeader(), jwt.getSigningInput(), jwt.getSignature())) {
+        LOGGER.warn("Signature was invalid");
+        return true;
+      }
+    } catch (JOSEException e) {
+      throw new RuntimeException("Error verifying signature", e);
     }
 
-    private boolean hasInvalidRoleType(String claimedRole, String expectedRole) {
-        if (!claimedRole.equals(expectedRole)) {
-            LOGGER.warn("Invalid role types provided: [{}], not [{}]", claimedRole, expectedRole);
-            return true;
-        }
-        return false;
-    }
+    LOGGER.info("Signature was valid");
+    return false;
+  }
 
-    private boolean invalidSignature(SignedJWT jwt) {
-        try {
-            RSAKey publicKey = jwksRetriever.getJWKSet().getKeys().get(0).toRSAKey();
-            JWSVerifier verifier = new RSASSAVerifier(publicKey.toRSAPublicKey());
-            if (!verifier.verify(jwt.getHeader(), jwt.getSigningInput(), jwt.getSignature())) {
-                LOGGER.warn("Signature was invalid");
-                return true;
-            }
-        } catch (JOSEException e) {
-            throw new RuntimeException(e);
-        }
-        LOGGER.info("Signature was valid");
-        return false;
-    }
-
-    private boolean hasExpired(SignedJWT signedJWT) throws ParseException {
-        if (signedJWT.getJWTClaimsSet().getExpirationTime().before(new Date(System.currentTimeMillis()))) {
-            LOGGER.info("JWT has expired");
-            return true;
-        }
-        return false;
-    }
+  private boolean hasExpired(SignedJWT signedJWT) throws ParseException {
+    boolean expired = signedJWT.getJWTClaimsSet().getExpirationTime().before(new Date());
+    if (expired) LOGGER.info("JWT has expired");
+    return expired;
+  }
 }
